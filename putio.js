@@ -8,6 +8,7 @@ var querystring = require("querystring");
 var request     = require("request");
 var spawn       = require("child_process").spawn;
 var fs          = require("fs");
+var ProgressBar = require('progress');
 var DL_DIR      = '';
 
 var putio = {
@@ -128,17 +129,14 @@ var putio = {
     download_to_file: function (url, file_info, callback) {
         var file = fs.createWriteStream(DL_DIR + file_info.name);
         var curl = spawn('curl', [url]);
-        var bytes_read = 0;
-        var last_info = 0;
-        var percent_done = 0;
+        var bar = new ProgressBar('downloading [:bar] :percent :etas', {
+            complete: '=',
+            incomplete: ' ',
+            total: file_info.size
+        });
         curl.stdout.on('data', function(data) {
             file.write(data);
-            bytes_read += data.length;
-            percent_done = Math.floor((bytes_read/file_info.size)*100)
-            if (percent_done > last_info+1) {
-                console.log(percent_done+'% Downloaded');
-                last_info = percent_done;
-            }
+            bar.tick(data.length);
         });
         // add an 'end' event listener to close the writeable stream
         curl.stdout.on('end', function(data) {

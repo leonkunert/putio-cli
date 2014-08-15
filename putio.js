@@ -6,16 +6,17 @@ var base_url    = "https://api.put.io/v2/";
 
 var querystring = require("querystring");
 var request     = require("request");
-var spawn       = require("child_process").spawn;
+var http        = require('http');
+var url         = require('url');
 var fs          = require("fs");
 var ProgressBar = require('progress');
 var DL_DIR      = '';
 
 var putio = {
-    make_putio_request: function (url, callback) {
+    make_putio_request: function (req_url, callback) {
         request(
             {
-                "url": url,
+                "url": req_url,
                 "json": true,
                 "followRedirect": false
             },
@@ -126,28 +127,26 @@ var putio = {
             }
         });
     },
-    download_to_file: function (url, file_info, callback) {
+    download_to_file: function (req_url, file_info, callback) {
         var file = fs.createWriteStream(DL_DIR + file_info.name);
-        var curl = spawn('curl', [url]);
+        var options = {
+            host: url.parse(req_url).host,
+            port: 80,
+            path: url.parse(req_url).path
+        };
         var bar = new ProgressBar('downloading [:bar] :percent :etas', {
             complete: '=',
             incomplete: ' ',
             total: file_info.size
         });
-        curl.stdout.on('data', function(data) {
-            file.write(data);
-            bar.tick(data.length);
-        });
-        // add an 'end' event listener to close the writeable stream
-        curl.stdout.on('end', function(data) {
-            file.end();
-            console.log(file_info.name + ' downloaded to ' + DL_DIR);
-        });
-        // when the spawn child process exits, check if there were any errors and close the writeable stream
-        curl.on('exit', function(code) {
-            if (code != 0) {
-                console.log('Failed: ' + code);
-            }
+        http.get(options, function(res) {
+            res.on('data', function(data) {
+                file.write(data);
+                bar.tick(data.length);
+            }).on('end', function() {
+                file.end();
+                console.log(file_info.name + ' downloaded to ' + DL_DIR);
+            });
         });
     }
 }

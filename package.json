@@ -1,0 +1,11 @@
+{
+  "name": "putio-cli",
+  "dependencies": {
+    "progress": "^1.1.8",
+    "request": "^2.40.0"
+  },
+  "preferGlobal": "true",
+  "bin": {
+    "putio": "app.js"
+  }
+}

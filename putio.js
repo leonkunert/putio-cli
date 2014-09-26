@@ -1,8 +1,7 @@
 var request_params = {
     // Your personal api token
-    "oauth_token": ""
+    "oauth_token": "N395ZSCU"
 }
-var base_url    = "https://api.put.io/v2/";
 
 var querystring = require("querystring");
 var request     = require("request");
@@ -10,12 +9,15 @@ var http        = require('http');
 var url         = require('url');
 var fs          = require("fs");
 var ProgressBar = require('progress');
-var DL_DIR      = '';
 
 var putio = {
+    base_url: "https://api.put.io/v2/",
+    DL_DIR: '/media/tmp/',
+    download_list: [],
+    downloading: false,
+    reruncount: 0,
     make_putio_request: function (req_url, callback) {
-        request(
-            {
+        request({
                 "url": req_url,
                 "json": true,
                 "followRedirect": false
@@ -29,112 +31,90 @@ var putio = {
             }
         });
     },
-    get_file_id: function (query, callback) {
-        putio.search(query, function (err, res) {
-            for (var i = res.files.length - 1; i >= 0; i--) {
-                if (res.files[i].name == query) {
-                    callback(err, res.files[i].id);
-                    break;
-                }
-            };
-        })
-    },
-    list_dir: function (query, callback) {
-        putio.get_file_id(query, function (err, res) {
-            console.info('Found Folder with id '+res);
-            putio.list_dir_with_file_id(res, function (err, res) {
-                callback(err, res);
-            });
+    get_download_link: function (file_id, callback) {
+        request({
+                "url": putio.base_url+'files/'+file_id+'/download?'+querystring.stringify(request_params),
+                "followRedirect": false
+            },
+            function (err, res, res_body) {
+
+            if (!err) {
+                callback(null, res.headers.location);
+            } else {
+                callback(err, null);
+            }
         });
     },
     list_dir_with_file_id: function (file_id, callback) {
         if (file_id && (typeof file_id == 'string' || typeof file_id == 'number')) {
             request_params.parent_id = file_id;
         }
-        putio.make_putio_request(base_url+'files/list'+'?'+querystring.stringify(request_params), function (err, res) {
+        putio.make_putio_request(putio.base_url+'files/list'+'?'+querystring.stringify(request_params), function (err, res) {
             callback(err, res);
         });
     },
-    search: function (query, callback) {
-        console.log('searching for '+query);
-        putio.make_putio_request(base_url+'files/search/'+query+'?'+querystring.stringify(request_params), function (err, res) {
-            callback(err, res);
-        });
+    add_file_to_download_list: function (file_info) {
+        putio.download_list.push(file_info);
+        if (!putio.downloading) {
+            putio.downloading = true;
+            putio.download_files_in_dowload_list();
+        }
     },
-    get_download_link: function (file_id, callback) {
-        request(
-            {
-                "url": base_url+'files/'+file_id+'/download?'+querystring.stringify(request_params),
-                "followRedirect": false
-            },
-            function (err, res, res_body) {
-
-            if (!err) {
-                callback(null, res.headers.location);
+    download_files_in_dowload_list: function () {
+        if (!putio.download_list.length) {
+            console.log('Download list empty');
+            putio.reruncount++;
+            if (putio.reruncount == 3) {
+                return;
             } else {
-                callback(err, null);
+                setTimeout(function() {
+                    putio.download_files_in_dowload_list();
+                }, 2000);
+                return;
             }
-        });
+        }
+        var file_info = putio.download_list.pop();
+        if (!fs.existsSync(putio.DL_DIR + file_info.path + '/' + file_info.name)) {
+            putio.get_download_link(file_info.id, function (err, res) {
+                putio.download_to_file(res, file_info, function () {
+                    putio.download_files_in_dowload_list();
+                });
+            });
+        } else {
+            putio.download_files_in_dowload_list();
+        }
     },
-    get_zip_download_link: function (file_ids, callback) {
-        request_params.file_ids = file_ids
-        request(
-            {
-                "url": base_url+'files/zip?'+querystring.stringify(request_params),
-                "followRedirect": false
-            },
-            function (err, res, res_body) {
-
-            if (!err) {
-                callback(null, res.headers.location);
-            } else {
-                callback(err, null);
-            }
-        });
-    },
-    download: function (query, callback) {
-        putio.search(query, function(err, res) {
-            for (var i = res.files.length - 1; i >= 0; i--) {
-                if (res.files[i].name == query) {
-                    var file_info = res.files[i];
-                    if (file_info.content_type == 'application/x-directory') {
-                        putio.list_dir_with_file_id(file_info.id, function (err, res) {
-                            var file_ids = '';
-                            var seperator = '';
-                            var zipfile = {
-                                "name": file_info.name+'.zip',
-                                "size": 0
-                            };
-                            for (var i = res.files.length - 1; i >= 0; i--) {
-                                file_ids += seperator+res.files[i].id;
-                                seperator = ',';
-                                zipfile.size += res.files[i].size;
-                            }
-                            putio.get_zip_download_link(file_ids, function (err, res) {
-                                putio.download_to_file(res, zipfile, function (foo) {
-                                    console.log('message');
-                                })
-                            });
-                        });
-                    } else {
-                        putio.get_download_link(file_info.id, function (err, res) {
-                            putio.download_to_file(res, file_info, function (foo) {
-                                console.log('message');
-                            })
-                        });
+    download_recursive: function (file_id, path) {
+        putio.list_dir_with_file_id(file_id, function (err, res) {
+            var files = res.files;
+            while (true) {
+                if (files.length === 0) {
+                    break;
+                }
+                var file_info = files.pop()
+                file_info.path = path;
+                if (file_info.content_type == "application/x-directory") {
+                    // If it is a folder call recursive
+                    if (!fs.existsSync(putio.DL_DIR + path + '/' + file_info.name)) {
+                        fs.mkdirSync(putio.DL_DIR + path + '/' + file_info.name);
                     }
+                    putio.download_recursive(file_info.id, path + '/' + file_info.name);
+                } else {
+                    // Add File to downloadlist
+                    putio.add_file_to_download_list(file_info);
                 }
             }
         });
     },
     download_to_file: function (req_url, file_info, callback) {
-        var file = fs.createWriteStream(DL_DIR + file_info.name);
+        console.log(putio.DL_DIR + file_info.path + file_info.name);
+        var file = fs.createWriteStream(putio.DL_DIR + file_info.path + '/' + file_info.name);
         var options = {
             host: url.parse(req_url).host,
             port: 80,
             path: url.parse(req_url).path
         };
-        var bar = new ProgressBar('downloading [:bar] :percent :etas', {
+        var bar = new ProgressBar('dw '+file_info.name.substr(0, 30)+' [:bar] :percent :etas', {
             complete: '=',
             incomplete: ' ',
             total: file_info.size
@@ -145,7 +125,8 @@ var putio = {
                 bar.tick(data.length);
             }).on('end', function() {
                 file.end();
-                console.log(file_info.name + ' downloaded to ' + DL_DIR);
+                console.log(file_info.name + ' downloaded to ' + putio.DL_DIR);
+                callback();
             });
         });
     }
